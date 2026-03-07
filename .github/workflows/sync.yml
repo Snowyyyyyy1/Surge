@@ -1,0 +1,50 @@
+name: Mirror public repo to private (keep my workflows)
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch: 
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout target (private) repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Backup my workflows
+        run: |
+          mkdir -p /tmp/my_workflows_backup
+          if [ -d ".github/workflows" ]; then
+            cp -r .github/workflows/* /tmp/my_workflows_backup/ || true
+          fi
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add and fetch upstream (public) repo
+        run: |
+          git remote add upstream https://github.com/SukkaW/Surge.git
+          git fetch upstream
+
+      - name: Reset to upstream and clean
+        run: |
+          git reset --hard upstream/master
+          git clean -fdx
+
+      - name: Restore my workflows
+        run: |
+          mkdir -p .github/workflows
+          cp -r /tmp/my_workflows_backup/* .github/workflows/ 2>/dev/null || true
+          git add .github/workflows || true
+          git commit -m "preserve my workflows" || true
+
+      - name: Push to private repo
+        run: |
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Snowyyyyyy1/Surge.git master --force
