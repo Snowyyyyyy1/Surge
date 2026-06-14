@@ -5,9 +5,8 @@ on:
       - master
   pull_request:
   schedule:
-    - cron: "17 5 * * *" # Runs at 05:17 UTC
-    - cron: "17 17 * * *" # Runs at 17:17 UTC
-  workflow_dispatch:
+    - cron: '0 5 * * *'  # Runs at 05:00 UTC
+    - cron: '0 17 * * *' # Runs at 1:00 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -21,13 +20,13 @@ jobs:
     steps:
       - uses: smorimoto/tune-github-hosted-runner-network@v1
         # https://github.com/actions/runner-images/issues/1187
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v4
         with:
           run_install: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v5
         with:
           node-version-file: ".node-version"
           cache: "pnpm"
@@ -36,11 +35,9 @@ jobs:
         run: |
           echo "build_dir=previous-build-${{ github.run_id }}-${{ github.run_number }}" >> $GITHUB_OUTPUT
       - name: Download Previous Build
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           repository: SukkaLab/ruleset.skk.moe
-          # during a race condition the dist repo may be private, use token to clone
-          token: ${{ secrets.GIT_TOKEN }}
           persist-credentials: false
           filter: "tree:0" # we don't care about git history here
           fetch-tags: false
@@ -69,7 +66,7 @@ jobs:
           echo "minute=$(date +'%M')" >> $GITHUB_OUTPUT
           echo "second=$(date +'%S')" >> $GITHUB_OUTPUT
       - name: Restore cache.db
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v4
         id: cache-db-restore
         with:
           path: |
@@ -83,7 +80,6 @@ jobs:
             ${{ runner.os }}-v3-${{ steps.date.outputs.year }}-${{ steps.date.outputs.month }}-
             ${{ runner.os }}-v3-${{ steps.date.outputs.year }}-
             ${{ runner.os }}-v3-
-      - run: pnpm config set --location=global minimumReleaseAge 0
       - run: pnpm install
       - run: pnpm run build
         env:
@@ -105,7 +101,7 @@ jobs:
             exit 1
           fi
           echo "public directory is ready: ${{ steps.ramdisk.outputs.build_dir }}"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: build-artifact-${{ github.sha }}-${{ github.run_number }}
           path: ${{ steps.ramdisk.outputs.build_dir }}
@@ -115,7 +111,7 @@ jobs:
           include-hidden-files: false
       - name: Cache cache.db
         if: always()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v4
         with:
           path: |
             .cache
@@ -126,40 +122,37 @@ jobs:
     needs:
       - build
     name: Diff output
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           name: build-artifact-${{ github.sha }}-${{ github.run_number }}
           path: public
       - name: Diff
         run: |
-          git clone --filter=tree:0 --no-tags https://${GH_USER}:${GH_TOKEN}@github.com/SukkaLab/ruleset.skk.moe.git ./deploy-git >/dev/null 2>&1
+          git clone --filter=tree:0 --no-tags https://github.com/SukkaLab/ruleset.skk.moe.git ./deploy-git >/dev/null 2>&1
           cd ./deploy-git
           git fetch origin master >/dev/null 2>&1
           rm -rf ./*
           cp -rf ../public/* ./
           git --no-pager diff --minimal
-        env:
-          GH_USER: ${{ secrets.GIT_USER }}
-          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
 
   deploy_to_cloudflare_pages:
     needs:
       - build
     name: Deploy to Cloudflare Pages
     if: github.ref == 'refs/heads/master'
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
     # matrix is a tricky way to define a variable directly in the action yaml
     strategy:
       matrix:
-        wranglerVersion: ["3.114.12"]
+        wranglerVersion: ['3.114.12']
     steps:
       - name: Get NPM cache directory path
         id: npm_cache_path
         shell: sh
         run: echo dir=$(npm config get cache) >> $GITHUB_OUTPUT
-      - uses: actions/cache@v5
+      - uses: actions/cache@v4
         with:
           path: |
             ${{ steps.npm_cache_path.outputs.dir }}
@@ -167,7 +160,7 @@ jobs:
           key: deploy-to-cloudflare-npm-${{ runner.os }}-${{ runner.arch }}-wrangler-${{ matrix.wranglerVersion }}
           restore-keys: |
             deploy-to-cloudflare-npm-${{ runner.os }}-${{ runner.arch }}-wrangler-
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           name: build-artifact-${{ github.sha }}-${{ github.run_number }}
           path: public
@@ -183,9 +176,9 @@ jobs:
       - build
     name: Deploy to GitHub and GitLab
     if: github.ref == 'refs/heads/master'
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           name: build-artifact-${{ github.sha }}-${{ github.run_number }}
           path: public
@@ -209,12 +202,7 @@ jobs:
           GITLAB_USER: ${{ secrets.GITLAB_USER }}
           GITLAB_TOKEN_NAME: ${{ secrets.GITLAB_TOKEN_NAME }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-      - name: Prepare GitHub Pages deployment marker
-        id: deploy_marker
-        run: |
-          echo "marker_file=deploy-check-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt" >> $GITHUB_OUTPUT
       - name: Upload Dist to GitHub
-        id: upload_dist_to_github
         continue-on-error: true
         run: |
           gh repo unarchive SukkaLab/ruleset.skk.moe --yes
@@ -225,47 +213,14 @@ jobs:
           git config --global user.name "${GH_USER}"
           rm -rf ./*
           cp -rf ../public/* ./
-          echo "ruleset-mirror.skk.moe" > CNAME
-          : > "${{ steps.deploy_marker.outputs.marker_file }}"
+          echo "ruleset.skk.moe" > CNAME
           git add --all .
           git commit -m "deploy: https://github.com/SukkaW/Surge/commit/${GITHUB_SHA}"
           git push --quiet --force origin HEAD:master
           cd ..
           rm -rf ./deploy-git
+          gh repo archive SukkaLab/ruleset.skk.moe --yes
         env:
           GH_EMAIL: ${{ secrets.GIT_EMAIL }}
           GH_USER: ${{ secrets.GIT_USER }}
           GH_TOKEN: ${{ secrets.GIT_TOKEN }}
-      - name: Wait for GitHub Pages to serve deployed marker
-        if: steps.upload_dist_to_github.outcome == 'success'
-        id: wait_for_github_pages
-        run: |
-          marker_file="${{ steps.deploy_marker.outputs.marker_file }}"
-          marker_url="https://ruleset-mirror.skk.moe/${marker_file}"
-
-          for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error --location --head "${marker_url}" >/dev/null; then
-              echo "GitHub Pages is serving ${marker_file}"
-              exit 0
-            fi
-            sleep 10
-          done
-
-          echo "Timed out waiting for GitHub Pages deployment: ${marker_url}"
-          exit 1
-      - name: Archive dist repo
-        if: steps.wait_for_github_pages.outcome == 'success'
-        run: |
-          gh repo archive SukkaLab/ruleset.skk.moe --yes
-        env:
-          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
-  remove_artifacts:
-    needs:
-      - deploy_to_cloudflare_pages
-      - deploy_to_github_gitlab
-    name: Remove Artifacts after Deployment
-    runs-on: ubuntu-slim
-    steps:
-      - uses: geekyeggo/delete-artifact@v6
-        with:
-          name: build-artifact-${{ github.sha }}-${{ github.run_number }}
